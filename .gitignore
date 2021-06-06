@@ -127,3 +127,13 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+
+.*.py.swp
+apebot.pickle
+apebot.service
+apebot.sh
+apebot.sqlite3
+config.json
+prices.sqlite3
+

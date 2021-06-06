@@ -1,0 +1,7 @@
+PyMySQL
+attrdict
+bscscan-python
+ccxt
+iso8601
+python-telegram-bot
+requests
