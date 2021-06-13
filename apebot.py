@@ -8,12 +8,16 @@
 # TODO persistent
 
 from decimal import Decimal
-import argparse
 import datetime
+import functools
 import json
 import logging
+import pprint
+import pytz
+import re
 import sqlite3
 import time
+import traceback
 
 from attrdict import AttrDict
 from bscscan import BscScan
@@ -33,9 +37,9 @@ def ad(obj={}, **kw):
     else:
         return obj
 
-def req(url):
+def req(url, **kw):
     time.sleep(0.1)
-    r = requests.get(url)
+    r = requests.get(url, **kw)
     logger.info(f"GET {url} {r.status_code}")
     return ad(r.json())
 
@@ -181,89 +185,196 @@ def apy_command(update: Update, _: CallbackContext) -> None:
 def update_markets(ctx: CallbackContext):
     markets = req('https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&per_page=50')
     ctx.bot_data['whitelist'] = {i.symbol.lower() for i in markets}
+    filters = {'key': 'momo-key', 'bond': 'barnbridge', 'bunny': 'pancake-bunny', 'ust': 'terrausd'}
+    coins = req('https://api.coingecko.com/api/v3/coins/list')
+    coins = [c for c in coins if c['id'] == filters.get(c['symbol'], c['id'])]
+    ctx.bot_data['coins'] = coins
 
+
+def get_coin_id(symbol, ctx):
+    coins = [c for c in ctx.bot_data['coins'] if c['symbol'] == symbol]
+    if len(coins) > 1:
+        raise ValueError(f"more than 1 coin with symbol {symbol} {coins}")
+    elif len(coins) == 0:
+        raise ValueError(f"coin not found with symbol {symbol}")
+    return coins[0]['id']
+
+def get_token_address(symbol, ctx):
+    # XXX fixed protocol
+    if symbol in ctx.bot_data.setdefault('token_address', {}):
+        return ctx.bot_data['token_address'][symbol]
+    coin_id = get_coin_id(symbol, ctx)
+    address = req(f'https://api.coingecko.com/api/v3/coins/{coin_id}')['platforms']['ethereum']
+    ctx.bot_data['token_address'][symbol] = address
+    return address
+
+@functools.lru_cache()
+def get_1inch_price(address, ttl=None):
+    usdc_address = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48'
+    usdc_amount = '10000000000'
+    r = req(f"https://api.1inch.exchange/v3.0/1/quote?fromTokenAddress={usdc_address}&toTokenAddress={address}&amount={usdc_amount}")
+    fromAmount = float(r.fromTokenAmount)*10**-r.fromToken.decimals
+    toAmount = float(r.toTokenAmount)*10**-r.toToken.decimals
+    return fromAmount / toAmount
+
+def get_price(exchange, symbol, ctx):
+    if exchange == '1inch':
+        address = get_token_address(symbol, ctx)
+        ttl = int(time.time() / 60)
+        return get_1inch_price(address, ttl)
+    else:
+        raise ValueError(f"unsupported exchange {exchange}")
 
 def price_alert(ctx: CallbackContext):
-    con = sqlite3.connect('prices.sqlite3') # XXX
-    cur = con.cursor()
-    try:
-        cur.execute('create table prices (time timestamp, symbol text, price real)')
-        con.commit()
-    except:
-        pass
-
-    # XXX
-    symbol = 'alpacasalpaca'
-    alpaca = int(bsc.get_acc_balance_by_token_contract_address('0x8f0528ce5ef7b51152a59745befdd91d97091d2f', '0x3Ee4de968E47877F432226d6a9A0DAD6EAc6001b')) / 10**18
-    salpaca = int(bsc.get_acc_balance_by_token_contract_address('0x6f695bd5ffd25149176629f8491a5099426ce7a7', '0x3Ee4de968E47877F432226d6a9A0DAD6EAc6001b')) / 10**18
-    price = alpaca / salpaca
-
-    now = datetime.datetime.now()
-    values = (now, symbol, price)
-    cur.execute('insert into prices values (?, ?, ?)', values)
-    con.commit()
-
-    intv = datetime.timedelta(seconds=3600) # XXX
-    values = (now - intv,)
-    cur.execute('select price from prices where time > ? order by time limit 1', values)
-    (oldprice,) = cur.fetchone()
-    pricechange = (price - oldprice) / price
-    msg = f'{symbol} price changed {pricechange*100:.2f}% to {price:.4f} in 1h' # XXX
-    logger.info(msg)
-    if abs(pricechange) > 0.01: # XXX
-        chat_id = config.telegram.chat_id
-        lastnotified = ctx.bot_data.setdefault('price_alert', {}).setdefault('lastnotified', {}).setdefault(chat_id, {}).setdefault(symbol, now - datetime.timedelta(days=1))
-        if now > lastnotified + intv:
+    for k, v in ctx.bot_data['price_alert'].items():
+        logger.info(f"{k} {v}")
+        try:
+            exchange, symbol, direction0, trigger_price, chat_id = k
+        except:
+            continue
+        now = normtz(datetime.datetime.utcnow())
+        intv = datetime.timedelta(seconds=3600)
+        price = get_price(exchange, symbol, ctx)
+        direction = -1 if direction0 == '<' else 1
+        trigger_price = float(trigger_price)
+        last_notified = normtz(datetime.datetime.fromisoformat(v.setdefault('last_notified', (now-intv*2).isoformat())))
+        last_price = v.setdefault('last_price', price)
+        ctx.bot_data['price_alert'][k]['last_price'] = price
+        logger.info(f"{exchange} {symbol} {direction} {trigger_price} {chat_id} {price} {last_notified} {last_price}")
+        if now < last_notified + intv:
+            logger.info(f"skip last notified too close")
+            continue
+        if (price - trigger_price) * direction > 0:
+            msg = f'{symbol} on {exchange} price {price:.4f} {direction0} {trigger_price}'
+            logger.info(msg)
             ctx.bot.send_message(chat_id, msg)
-            ctx.bot_data['price_alert']['lastnotified'][chat_id][symbol] = now
+            ctx.bot_data['price_alert'][k]['last_notified'] = now.isoformat()
+
+def price_alert_command(update: Update, ctx: CallbackContext) -> None:
+    logger.info(f"{update.message.chat.id} {update.message.chat.username} {update.message.text}")
+    try:
+        exchange, symbol, direction, trigger_price = update.message.text.split()[1:]
+        chat_id = update.message.chat_id
+        ctx.bot_data['price_alert'][(exchange, symbol, direction, trigger_price, chat_id)] = {}
+        update.message.reply_text('ok')
+    except:
+        update.message.reply_text('error')
+        traceback.print_exc()
+
+def list_price_alert_command(update: Update, ctx: CallbackContext) -> None:
+    logger.info(f"{update.message.chat.id} {update.message.chat.username} {update.message.text}")
+    try:
+        update.message.reply_text(pprint.pformat(ctx.bot_data['price_alert'], width=40))
+    except:
+        update.message.reply_text('error')
+        traceback.print_exc()
+
+def clear_price_alert_command(update: Update, ctx: CallbackContext) -> None:
+    logger.info(f"{update.message.chat.id} {update.message.chat.username} {update.message.text}")
+    try:
+        ctx.bot_data['price_alert'] = {}
+        update.message.reply_text('ok')
+    except:
+        update.message.reply_text('error')
+        traceback.print_exc()
+
+def delete_price_alert_command(update: Update, ctx: CallbackContext) -> None:
+    logger.info(f"{update.message.chat.id} {update.message.chat.username} {update.message.text}")
+    try:
+        exchange, symbol, direction, trigger_price = update.message.text.split()[1:]
+        chat_id = update.message.chat_id
+        ctx.bot_data['price_alert'].pop((exchange, symbol, direction, trigger_price, chat_id))
+        update.message.reply_text('ok')
+    except:
+        update.message.reply_text('error')
+        traceback.print_exc()
 
 
-def get_funding_binanceu(start=None, end=None):
-    for data in req(f"https://fapi.binance.com/fapi/v1/fundingRate?limit=1000"):
+def get_price_command(update: Update, ctx: CallbackContext) -> None:
+    logger.info(f"{update.message.chat.id} {update.message.chat.username} {update.message.text}")
+    try:
+        symbol = update.message.text.split()[1]
+        exchange = '1inch' # XXX
+        price = get_price(exchange, symbol, ctx)
+        update.message.reply_text(f'price {exchange} {symbol} {price:.4f}')
+    except:
+        update.message.reply_text('error')
+        logger.error(traceback.format_exc())
+
+
+def get_binanceu_funding(start=None, end=None):
+    params = {'limit': 1000}
+    if start:
+        params['startTime'] = int(start.timestamp()) * 1000
+    if end:
+        params['endTime'] = int(end.timestamp()) * 1000
+    for data in req(f"https://fapi.binance.com/fapi/v1/fundingRate", params=params):
         if not data['symbol'].endswith('USDT'):
             continue
         symbol = data['symbol'].replace('USDT', '')
-        timestamp = datetime.datetime.fromtimestamp(data['fundingTime'] // 1000)
+        timestamp = normtz(datetime.datetime.fromtimestamp(data['fundingTime'] // 1000))
         apr = float(data['fundingRate']) * 3 * 365
         yield (symbol, timestamp, apr)
 
-def get_funding_binancec(start=None, end=None):
+def get_binancec_funding(start=None, end=None):
     for info in req('https://dapi.binance.com/dapi/v1/exchangeInfo')['symbols']:
         if not info['symbol'].endswith('USD_PERP'):
             continue
         symbol = info['symbol'].replace('USD_PERP', '')
-        for data in req(f"https://dapi.binance.com/dapi/v1/fundingRate?symbol={info['symbol']}&limit=1000"):
-            timestamp = datetime.datetime.fromtimestamp(data['fundingTime'] // 1000)
+        params = {'limit': 1000}
+        if start:
+            params['startTime'] = int(start.timestamp()) * 1000
+        if end:
+            params['endTime'] = int(end.timestamp()) * 1000
+        for data in req(f"https://dapi.binance.com/dapi/v1/fundingRate?symbol={info['symbol']}", params=params):
+            timestamp = normtz(datetime.datetime.fromtimestamp(data['fundingTime'] // 1000))
             apr = float(data['fundingRate']) * 3 * 365
             yield (symbol, timestamp, apr)
 
-def get_funding_ftx(start=None, end=None):
-    for data in req(f"https://ftx.com/api/funding_rates")['result']:
+def get_ftx_funding(start=None, end=None):
+    params = {}
+    if start:
+        params['start_time'] = int(start.timestamp())
+    if end:
+        params['end_time'] = int(end.timestamp())
+    for data in req(f"https://ftx.com/api/funding_rates", params=params)['result']:
         if not data['future'].endswith('-PERP'):
             continue
         symbol = data['future'].replace('-PERP', '')
-        timestamp = data['time']
+        timestamp = normtz(datetime.datetime.fromisoformat(data['time']))
         apr = float(data['rate']) * 24 * 365
         yield (symbol, timestamp, apr)
 
-def get_funding_dydx(start=None, end=None):
+def get_dydx_funding(start=None, end=None):
     for market in req(f"https://api.dydx.exchange/v3/markets").markets:
         if not market.endswith('-USD'):
             continue
         symbol = market.replace('-USD', '')
-        for data in req(f"https://api.dydx.exchange/v3/historical-funding/{market}").historicalFunding:
-            timestamp = data.effectiveAt
+        params = {}
+        if end:
+            params['effectiveBeforeOrAt'] = end.isoformat()
+        for data in req(f"https://api.dydx.exchange/v3/historical-funding/{market}", params=params).historicalFunding:
+            timestamp = normtz(datetime.datetime.fromisoformat(data.effectiveAt.replace('Z', '+00:00')))
             apr = float(data.rate) * 24 * 365
             yield (symbol, timestamp, apr)
 
 FUNDING_EXCHANGES = {
-    'binanceu': get_funding_binanceu,
-    'binancec': get_funding_binancec,
-    'ftx': get_funding_ftx,
-    'dydx': get_funding_dydx,
+    'binanceu': get_binanceu_funding,
+    'binancec': get_binancec_funding,
+    'ftx': get_ftx_funding,
+    'dydx': get_dydx_funding,
 }
 
-def update_funding(ctx: CallbackContext):
+def normtz(dt):
+    if dt and not dt.tzinfo:
+        return dt.replace(tzinfo=pytz.utc)
+    return dt
+
+def update_exchange_funding(exchange, start=None, end=None):
+    ts_min = None
+    ts_max = None
+    count = 0
+    total = 0
     con = sqlite3.connect('apebot.sqlite3')
     cur = con.cursor()
     try:
@@ -271,17 +382,106 @@ def update_funding(ctx: CallbackContext):
         con.commit()
     except:
         pass
-    for exchange, get_funding in FUNDING_EXCHANGES.items():
+    while 1:
+        logger.info(f"updating funding {exchange} start {start} end {end}")
+        ts_min0 = ts_min
+        ts_max0 = ts_max
+        count = 0
+        for symbol, timestamp, apr in FUNDING_EXCHANGES[exchange](start, end):
+            ts_min = min(ts_min, timestamp) if ts_min else timestamp
+            ts_max = max(ts_max, timestamp) if ts_max else timestamp
+            try:
+                values = (exchange, symbol, timestamp.isoformat(), apr)
+                cur.execute('insert into funding values (?, ?, ?, ?)', values)
+                count += 1
+            except sqlite3.IntegrityError:
+                pass
+            except:
+                traceback.print_exc()
+        con.commit()
+        logger.info(f"updated funding {exchange} {count} entries min timestamp {ts_min} max timestamp {ts_max}")
+        total += count
+        ts_min0 = normtz(ts_min0)
+        ts_max0 = normtz(ts_max0)
+        ts_min = normtz(ts_min)
+        ts_max = normtz(ts_max)
+        start = normtz(start)
+        end = normtz(end)
+        if ts_min0 == ts_min and ts_max0 == ts_max:
+            break
+        elif ts_min <= start and end <= ts_max:
+            break
+        elif ts_min <= start and ts_max < end:
+            start = ts_max
+        elif start < ts_min and end <= ts_max:
+            end = ts_min
+        else:
+            break
+    return total, ts_min, ts_max
+
+def update_funding(ctx: CallbackContext):
+    for exchange in FUNDING_EXCHANGES:
         try:
-            for symbol, timestamp, apr in get_funding():
-                try:
-                    values = (exchange, symbol, timestamp, apr)
-                    cur.execute('insert into funding values (?, ?, ?, ?)', values)
-                    con.commit()
-                except:
-                    pass
+            update_exchange_funding(exchange)
         except:
             pass
+
+def escape(s, chars):
+    for c in chars:
+        s = s.replace(c, '\\' + c)
+    return s
+
+def update_funding_command(update: Update, ctx: CallbackContext) -> None:
+    logger.info(update.message.text)
+    args = update.message.text.split()[1:]
+    exchanges = [i for i in args if i in FUNDING_EXCHANGES] or FUNDING_EXCHANGES.keys()
+    start = None
+    end = None
+    iter_args = iter(args)
+    for arg in iter_args:
+        try:
+            start = normtz(datetime.datetime.fromisoformat(arg))
+            break
+        except:
+            pass
+    for arg in iter_args:
+        try:
+            end = normtz(datetime.datetime.fromisoformat(arg))
+            break
+        except:
+            pass
+    for exchange in exchanges:
+        count, ts_min, ts_max = update_exchange_funding(exchange, start, end)
+        ts_min = escape(str(ts_min), '-.+')
+        ts_max = escape(str(ts_max), '-.+')
+        message = f"total updated funding {exchange} {count} entries min timestamp {ts_min} max timestamp {ts_max}"
+        logger.info(message)
+        update.message.reply_text(message, parse_mode=telegram.ParseMode.MARKDOWN_V2)
+
+def funding_command2(update: Update, ctx: CallbackContext) -> None:
+    logger.info(update.message.text)
+    whitelist = [i.upper() for i in ctx.bot_data['whitelist']]
+    args = update.message.text.split()[1:]
+    exchanges = [i for i in args if i in FUNDING_EXCHANGES] or FUNDING_EXCHANGES.keys()
+    symbols = [i.upper() for i in args if i not in FUNDING_EXCHANGES and not re.match(r'\d', i)] or whitelist
+    days = [i.replace('d', ' day') for i in args if re.match(r'\d+d', i)] or ['1 day']
+    rates = []
+    con = sqlite3.connect('apebot.sqlite3')
+    cur = con.cursor()
+    for day in days:
+        E = ("exchange in (%s) and " % ','.join('\''+i+'\'' for i in exchanges)) if exchanges else ''
+        S = ("symbol in (%s) and " % ','.join('\''+i+'\'' for i in symbols)) if symbols else ''
+        sql = f"select exchange, symbol, avg(apr) from funding where {E} {S} time >= datetime('now', '{'-'+day}') group by exchange, symbol order by avg(apr) desc limit 10"
+        logger.info(sql)
+        for exchange, symbol, rate in cur.execute(sql).fetchall():
+            rates.append(ad(exchange=exchange, symbol=symbol, rate=rate))
+    rows = []
+    for r in rates:
+        rows.append((r.symbol.upper(), r.exchange, f"{round(r.rate * 100, 2)}%"))
+    w = [max(len(r) for r in c) for c in zip(*rows)]
+    message = f'{days[0]} funding rates: \(APR\)\n'
+    message += '\n'.join(f'`{r[0]:{w[0]}} {r[1]:{w[1]}} {r[2]:>{w[2]}}`' for r in rows)
+    update.message.reply_text(message, parse_mode=telegram.ParseMode.MARKDOWN_V2)
 
 
 BINANCE_ORDERS_CONFIG = [
@@ -341,9 +541,17 @@ def main() -> None:
     dispatcher.add_handler(CommandHandler("funding", funding_command))
     dispatcher.add_handler(CommandHandler("f", funding_command))
     dispatcher.add_handler(CommandHandler("apy", apy_command))
+    dispatcher.add_handler(CommandHandler("update_funding", update_funding_command))
+    dispatcher.add_handler(CommandHandler("ff", funding_command2))
+    dispatcher.add_handler(CommandHandler("price_alert", price_alert_command))
+    dispatcher.add_handler(CommandHandler("p", get_price_command))
+    dispatcher.add_handler(CommandHandler("list_price_alert", list_price_alert_command))
+    dispatcher.add_handler(CommandHandler("clear_price_alert", clear_price_alert_command))
+    dispatcher.add_handler(CommandHandler("delete_price_alert", delete_price_alert_command))
     updater.job_queue.run_repeating(update_markets, interval=3600, first=1) # 1h
-    #updater.job_queue.run_repeating(price_alert, interval=300, first=1) # 5m
     updater.job_queue.run_repeating(update_funding, interval=300, first=1) # 5m
+    updater.job_queue.run_repeating(price_alert, interval=60, first=1) # 1m
+    #disabled
     #updater.job_queue.run_repeating(order_alert, interval=60, first=1) # 1m
     updater.start_polling()
     updater.idle()
