@@ -201,27 +201,31 @@ def get_coin_id(symbol, ctx):
 
 def get_token_address(symbol, ctx):
     # XXX fixed protocol
-    if symbol in ctx.bot_data.setdefault('token_address', {}):
+    if (symbol in ctx.bot_data.setdefault('token_address', {}) and
+        symbol in ctx.bot_data.setdefault('token_decimals', {})):
         return ctx.bot_data['token_address'][symbol]
     coin_id = get_coin_id(symbol, ctx)
     address = req(f'https://api.coingecko.com/api/v3/coins/{coin_id}')['platforms']['ethereum']
     ctx.bot_data['token_address'][symbol] = address
+    decimals = req(f"https://api.ethplorer.io/getTokenInfo/{address}?apiKey=freekey")['decimals']
+    ctx.bot_data['token_decimals'][symbol] = int(decimals)
     return address
 
 @functools.lru_cache()
-def get_1inch_price(address, ttl=None):
-    usdc_address = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48'
-    usdc_amount = '10000000000'
-    r = req(f"https://api.1inch.exchange/v3.0/1/quote?fromTokenAddress={usdc_address}&toTokenAddress={address}&amount={usdc_amount}")
+def get_1inch_price(from_address, to_address, from_amount, ttl=None):
+    #usdc_address = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48'
+    r = req(f"https://api.1inch.exchange/v3.0/1/quote?fromTokenAddress={from_address}&toTokenAddress={to_address}&amount={from_amount}")
     fromAmount = float(r.fromTokenAmount)*10**-r.fromToken.decimals
     toAmount = float(r.toTokenAmount)*10**-r.toToken.decimals
     return fromAmount / toAmount
 
-def get_price(exchange, symbol, ctx):
+def get_price(exchange, to_symbol, ctx, from_symbol='usdc', from_amount=10000):
     if exchange == '1inch':
-        address = get_token_address(symbol, ctx)
+        to_address = get_token_address(to_symbol, ctx)
+        from_address = get_token_address(from_symbol, ctx)
+        from_amount *= 10**ctx.bot_data['token_decimals'][from_symbol]
         ttl = int(time.time() / 60)
-        return get_1inch_price(address, ttl)
+        return get_1inch_price(from_address, to_address, from_amount, ttl)
     else:
         raise ValueError(f"unsupported exchange {exchange}")
 
@@ -297,6 +301,21 @@ def get_price_command(update: Update, ctx: CallbackContext) -> None:
         exchange = '1inch' # XXX
         price = get_price(exchange, symbol, ctx)
         update.message.reply_text(f'price {exchange} {symbol} {price:.4f}')
+    except:
+        update.message.reply_text('error')
+        logger.error(traceback.format_exc())
+
+
+def float_command(update: Update, ctx: CallbackContext) -> None:
+    logger.info(f"{update.message.chat.id} {update.message.chat.username} {update.message.text}")
+    try:
+        exchange = '1inch' # XXX
+        symbol = 'float'
+        buy_price = get_price(exchange, symbol, ctx, 'usdc', 10000)
+        sell_price = 1 / get_price(exchange, 'usdc', ctx, symbol, 6666)
+        msg = '\n'.join([f'buy price {exchange} {symbol} {buy_price:.4f}',
+                         f'sell price {exchange} {symbol} {sell_price:.4f}'])
+        update.message.reply_text(msg)
     except:
         update.message.reply_text('error')
         logger.error(traceback.format_exc())
@@ -539,12 +558,13 @@ def main() -> None:
     updater = Updater(config.telegram.token, persistence=persistence)
     dispatcher = updater.dispatcher
     dispatcher.add_handler(CommandHandler("funding", funding_command))
-    dispatcher.add_handler(CommandHandler("f", funding_command))
+    dispatcher.add_handler(CommandHandler("f1", funding_command))
     dispatcher.add_handler(CommandHandler("apy", apy_command))
     dispatcher.add_handler(CommandHandler("update_funding", update_funding_command))
-    dispatcher.add_handler(CommandHandler("ff", funding_command2))
+    dispatcher.add_handler(CommandHandler("f", funding_command2))
     dispatcher.add_handler(CommandHandler("price_alert", price_alert_command))
     dispatcher.add_handler(CommandHandler("p", get_price_command))
+    dispatcher.add_handler(CommandHandler("float", float_command))
     dispatcher.add_handler(CommandHandler("list_price_alert", list_price_alert_command))
     dispatcher.add_handler(CommandHandler("clear_price_alert", clear_price_alert_command))
     dispatcher.add_handler(CommandHandler("delete_price_alert", delete_price_alert_command))
