@@ -182,6 +182,11 @@ def apy_command(update: Update, _: CallbackContext) -> None:
     update.message.reply_text(f"{round(apy*100,2)}% APY = {round(apr*100,2)}% APR compound daily")
 
 
+def greed_command(update: Update, _: CallbackContext) -> None:
+    logger.info(f"{update.message.chat.id} {update.message.chat.username} {update.message.text}")
+    update.message.reply_photo("https://alternative.me/crypto/fear-and-greed-index.png")
+
+
 def update_markets(ctx: CallbackContext):
     markets = req('https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&per_page=50')
     ctx.bot_data['whitelist'] = {i.symbol.lower() for i in markets}
@@ -560,6 +565,7 @@ def main() -> None:
     dispatcher.add_handler(CommandHandler("funding", funding_command))
     dispatcher.add_handler(CommandHandler("f1", funding_command))
     dispatcher.add_handler(CommandHandler("apy", apy_command))
+    dispatcher.add_handler(CommandHandler("greed", greed_command))
     dispatcher.add_handler(CommandHandler("update_funding", update_funding_command))
     dispatcher.add_handler(CommandHandler("f", funding_command2))
     dispatcher.add_handler(CommandHandler("price_alert", price_alert_command))
