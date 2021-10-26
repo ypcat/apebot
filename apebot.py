@@ -184,11 +184,11 @@ def apy_command(update: Update, _: CallbackContext) -> None:
 
 def greed_command(update: Update, _: CallbackContext) -> None:
     logger.info(f"{update.message.chat.id} {update.message.chat.username} {update.message.text}")
-    update.message.reply_photo("https://alternative.me/crypto/fear-and-greed-index.png")
+    update.message.reply_photo(requests.get("https://alternative.me/crypto/fear-and-greed-index.png").content)
 
 
 def update_markets(ctx: CallbackContext):
-    markets = req('https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&per_page=50')
+    markets = req('https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&per_page=100')
     ctx.bot_data['whitelist'] = {i.symbol.lower() for i in markets}
     filters = {'key': 'momo-key', 'bond': 'barnbridge', 'bunny': 'pancake-bunny', 'ust': 'terrausd'}
     coins = req('https://api.coingecko.com/api/v3/coins/list')
@@ -487,7 +487,7 @@ def funding_command2(update: Update, ctx: CallbackContext) -> None:
     whitelist = [i.upper() for i in ctx.bot_data['whitelist']]
     args = update.message.text.split()[1:]
     exchanges = [i for i in args if i in FUNDING_EXCHANGES] or FUNDING_EXCHANGES.keys()
-    symbols = [i.upper() for i in args if i not in FUNDING_EXCHANGES and not re.match(r'\d', i)] or whitelist
+    symbols = [i.upper().replace('-PERP', '') for i in args if i not in FUNDING_EXCHANGES and not re.match(r'\d', i)] or whitelist
     days = [i.replace('d', ' day') for i in args if re.match(r'\d+d', i)] or ['1 day']
     rates = []
     con = sqlite3.connect('apebot.sqlite3')
