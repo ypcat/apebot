@@ -149,7 +149,7 @@ def dydx_funding(symbol, whitelist):
 
 
 EXCHANGES = {
-    'ftx': ftx_funding,
+    #'ftx': ftx_funding,
     'binance': binance_funding,
     'dydx': dydx_funding,
     #'dydxL1': dydxL1_funding,
@@ -558,6 +558,32 @@ def order_alert(ctx: CallbackContext):
         ctx.bot_data['order_alert']['lastnotified'][chat_id][exchange] = now
 
 
+def ftt_alert(ctx: CallbackContext):
+    ftt(ctx.bot)
+
+def get_bot():
+    return telegram.Bot(config.telegram.token)
+
+def ftt(bot=get_bot()):
+    #chat_id = config.telegram.chat_id
+    chat_id = -608131165
+    #exchange = ccxt.ftx(config['ftx'])
+    exchange = ccxt.binance(dict(config['binance'], options={'defaultType':'future'}))
+    symbol = 'FTT/BUSD'
+    intv = '1m'
+    limit = 30
+    n = 3
+    candles = exchange.fetch_ohlcv(symbol, '1m', limit=limit)[:-1]
+    avgVol = sum(c[5] for c in candles) / len(candles)
+    changes = ' '.join(f'{(c[4]/c[1]-1)*100:.2f}%' for c in candles[-n:])
+    vols = ' '.join(f'{c[5]}' for c in candles[-n:])
+    logger.info(f"{exchange.name} {symbol} avg vol {avgVol} changes {changes} vols {vols}")
+    if (all(c[4] > c[1] and c[5] > avgVol for c in candles[-n:]) or
+        all(c[4] < c[1] and c[5] > avgVol for c in candles[-n:])):
+        msg = f'{exchange.name} {symbol} last {n} {intv} candles {changes}'
+        bot.send_message(chat_id, msg)
+
+
 def main() -> None:
     persistence = PicklePersistence('apebot.pickle')
     updater = Updater(config.telegram.token, persistence=persistence)
@@ -579,6 +605,7 @@ def main() -> None:
     updater.job_queue.run_repeating(price_alert, interval=60, first=1) # 1m
     #disabled
     #updater.job_queue.run_repeating(order_alert, interval=60, first=1) # 1m
+    #updater.job_queue.run_repeating(ftt_alert, interval=31, first=1) # 1m
     updater.start_polling()
     updater.idle()
 
