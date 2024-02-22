@@ -385,7 +385,7 @@ def get_dydx_funding(start=None, end=None):
 FUNDING_EXCHANGES = {
     'binanceu': get_binanceu_funding,
     'binancec': get_binancec_funding,
-    'ftx': get_ftx_funding,
+    #'ftx': get_ftx_funding,
     'dydx': get_dydx_funding,
 }
 
@@ -425,6 +425,8 @@ def update_exchange_funding(exchange, start=None, end=None):
         con.commit()
         logger.info(f"updated funding {exchange} {count} entries min timestamp {ts_min} max timestamp {ts_max}")
         total += count
+        start = start or ts_min
+        end = end or ts_max
         ts_min0 = normtz(ts_min0)
         ts_max0 = normtz(ts_max0)
         ts_min = normtz(ts_min)
@@ -448,7 +450,7 @@ def update_funding(ctx: CallbackContext):
         try:
             update_exchange_funding(exchange)
         except:
-            pass
+            traceback.print_exc()
 
 def escape(s, chars):
     for c in chars:
