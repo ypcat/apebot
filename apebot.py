@@ -382,11 +382,25 @@ def get_dydx_funding(start=None, end=None):
             apr = float(data.rate) * 24 * 365
             yield (symbol, timestamp, apr)
 
+def get_dydxv4_funding(start=None, end=None):
+    for market in req(f"https://indexer.dydx.trade/v4/perpetualMarkets").markets:
+        if not market.endswith('-USD'):
+            continue
+        symbol = market.replace('-USD', '')
+        params = {}
+        if end:
+            params['effectiveBeforeOrAt'] = end.isoformat()
+        for data in req(f"https://indexer.dydx.trade/v4/historicalFunding/{market}", params=params).historicalFunding:
+            timestamp = normtz(datetime.datetime.fromisoformat(data.effectiveAt.replace('Z', '+00:00')))
+            apr = float(data.rate) * 24 * 365
+            yield (symbol, timestamp, apr)
+
 FUNDING_EXCHANGES = {
     'binanceu': get_binanceu_funding,
     'binancec': get_binancec_funding,
     #'ftx': get_ftx_funding,
     'dydx': get_dydx_funding,
+    'dydxv4': get_dydxv4_funding,
 }
 
 def normtz(dt):
@@ -402,7 +416,7 @@ def update_exchange_funding(exchange, start=None, end=None):
     con = sqlite3.connect('apebot.sqlite3')
     cur = con.cursor()
     try:
-        cur.execute('create table funding (exchange text, symbol text, time timestamp, apr real, unique(exchange, symbol, time))')
+        cur.execute('create table if not exists funding (exchange text, symbol text, time timestamp, apr real, unique(exchange, symbol, time))')
         con.commit()
     except:
         pass
