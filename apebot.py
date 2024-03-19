@@ -12,6 +12,7 @@ import datetime
 import functools
 import json
 import logging
+import os
 import pprint
 import pytz
 import re
@@ -600,8 +601,16 @@ def ftt(bot=get_bot()):
         bot.send_message(chat_id, msg)
 
 
+def get_persistence(path):
+    try:
+        assert(os.path.getsize(path) > 0)
+    except:
+        os.remove(path)
+    return PicklePersistence(path)
+
+
 def main() -> None:
-    persistence = PicklePersistence('apebot.pickle')
+    persistence = get_persistence('apebot.pickle')
     updater = Updater(config.telegram.token, persistence=persistence)
     dispatcher = updater.dispatcher
     dispatcher.add_handler(CommandHandler("funding", funding_command))
