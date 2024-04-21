@@ -236,7 +236,7 @@ def get_price(exchange, to_symbol, ctx, from_symbol='usdc', from_amount=10000):
         raise ValueError(f"unsupported exchange {exchange}")
 
 def price_alert(ctx: CallbackContext):
-    for k, v in ctx.bot_data['price_alert'].items():
+    for k, v in ctx.bot_data.get('price_alert', {}).items():
         logger.info(f"{k} {v}")
         try:
             exchange, symbol, direction0, trigger_price, chat_id = k
@@ -525,6 +525,51 @@ def funding_command2(update: Update, ctx: CallbackContext) -> None:
     update.message.reply_text(message, parse_mode=telegram.ParseMode.MARKDOWN_V2)
 
 
+def get_el():
+    return requests.get("https://api.dune.com/api/v1/query/3411506/results?limit=1000", headers={"X-Dune-API-Key": config.dune.apiKey}).json()['result']['rows'][0]['total_restaked_points']
+
+def get_ef():
+    return requests.get('https://www.etherfi.bid/api/etherfi/points').json()['loyaltyPoints'] * 10 - 9 * 37100695710
+
+def get_el_price():
+    return requests.get('https://api-v2.whales.market/v2/tokens/detail/EigenLayer').json()['data']['last_price']
+
+def get_ef_price():
+    return float(requests.get('https://fapi.binance.com/fapi/v1/ticker/price?symbol=ETHFIUSDT').json()['price'])
+
+def points_command(update: Update, ctx: CallbackContext) -> None:
+    update.message.reply_text(
+f"""
+`EL points {f"{int(get_el()):,}".rjust(16)}`
+`EF points {f"{int(get_ef()):,}".rjust(16)}`
+""".strip(), parse_mode=telegram.ParseMode.MARKDOWN_V2)
+
+def etherfi_command(update: Update, ctx: CallbackContext) -> None:
+    chat_id = update.message.chat_id
+    address = config.wallet[str(chat_id)]
+    d = requests.get(f"https://app.ether.fi/api/portfolio/v3/{address}").json()
+    logger.info(f"https://app.ether.fi/api/portfolio/v3/{address}")
+    logger.info(d)
+    el = d['totalIntegrationEigenLayerPoints']
+    ef = d['totalIntegrationLoyaltyPoints']
+    global_el = get_el()
+    global_ef = get_ef()
+    el_price = get_el_price()
+    ef_price = get_ef_price()
+    ef_airdrop = 50000000
+    update.message.reply_text(
+f"""
+your EL points {int(el):,}
+your EF points {int(ef):,}
+global EL points {int(global_el):,}
+global EF points {int(global_ef):,}
+EL point price {el_price:.3f}
+EF token price {ef_price:.3f}
+your EL airdrop {el * el_price:.3f}
+your EF airdrop {ef / global_ef * ef_airdrop * ef_price:.3f}
+""".strip())
+
+
 BINANCE_ORDERS_CONFIG = [
     {'market': 'spot',            'url': 'https://www.binance.com/bapi/capital/v1/private/streamer/order/get-trade-orders', 'headers': {'Referer': 'https://www.binance.com/en/my/orders/exchange/tradeorder'},               'data':{}},
     {'market': 'future usd-m',    'url': 'https://www.binance.com/bapi/futures/v1/private/future/order/order-history',      'headers': {'Referer': 'https://www.binance.com/en/my/orders/futures/orderhistory'},              'data':{}},
@@ -625,6 +670,8 @@ def main() -> None:
     dispatcher.add_handler(CommandHandler("list_price_alert", list_price_alert_command))
     dispatcher.add_handler(CommandHandler("clear_price_alert", clear_price_alert_command))
     dispatcher.add_handler(CommandHandler("delete_price_alert", delete_price_alert_command))
+    dispatcher.add_handler(CommandHandler(["point", "points"], points_command))
+    dispatcher.add_handler(CommandHandler(["etherfi", "ethfi"], etherfi_command))
     updater.job_queue.run_repeating(update_markets, interval=3600, first=1) # 1h
     updater.job_queue.run_repeating(update_funding, interval=300, first=1) # 5m
     updater.job_queue.run_repeating(price_alert, interval=60, first=1) # 1m
