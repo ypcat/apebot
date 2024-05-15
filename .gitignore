@@ -136,4 +136,5 @@ apebot.sh
 apebot.sqlite3
 config.json
 prices.sqlite3
+cache.sqlite3
 

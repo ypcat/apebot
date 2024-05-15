@@ -646,6 +646,28 @@ def ftt(bot=get_bot()):
         bot.send_message(chat_id, msg)
 
 
+def launchpool_alert(ctx: CallbackContext):
+    r = req('https://www.binance.com/bapi/composite/v1/public/cms/article/all/query?type=1&pageNo=1&pageSize=10&queryKeywords=launchpool&sortBy=2&apiVersion=V2')
+    con = sqlite3.connect('cache.sqlite3')
+    cur = con.cursor()
+    try:
+        cur.execute('create table if not exists cache(key string primary key, value string)')
+        con.commit()
+    except:
+        pass
+    for i in r.data.articles:
+        code, title = i.code, i.title
+        logger.info(f"launchpool {code} {title}")
+        url = f'https://www.binance.com/en/support/announcement/{code}'
+        text = f'{title}\n{url}'
+        if cur.execute('select * from cache where key=?', [code]).fetchone():
+            continue
+        ctx.bot.send_message(config.telegram.chat_id, text)
+        cur.execute('insert into cache values (?, ?)', [code, title])
+        con.commit()
+
+
+
 def get_persistence(path):
     try:
         assert(os.path.getsize(path) > 0)
@@ -675,6 +697,7 @@ def main() -> None:
     updater.job_queue.run_repeating(update_markets, interval=3600, first=1) # 1h
     updater.job_queue.run_repeating(update_funding, interval=300, first=1) # 5m
     updater.job_queue.run_repeating(price_alert, interval=60, first=1) # 1m
+    updater.job_queue.run_repeating(launchpool_alert, interval=3600, first=1) # 1h
     #disabled
     #updater.job_queue.run_repeating(order_alert, interval=60, first=1) # 1m
     #updater.job_queue.run_repeating(ftt_alert, interval=31, first=1) # 1m
