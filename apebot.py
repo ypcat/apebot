@@ -529,10 +529,12 @@ def get_el():
     return requests.get("https://api.dune.com/api/v1/query/3411506/results?limit=1000", headers={"X-Dune-API-Key": config.dune.apiKey}).json()['result']['rows'][0]['total_restaked_points']
 
 def get_ef():
-    return requests.get('https://www.etherfi.bid/api/etherfi/points').json()['loyaltyPoints'] * 10 - 9 * 37100695710
+    #return requests.get('https://www.etherfi.bid/api/etherfi/points').json()['loyaltyPoints'] * 10 - 9 * 37100695710
+    return requests.get('https://www.ether.fi/api/points').json()['loyaltyPoints']
 
 def get_el_price():
-    return requests.get('https://api-v2.whales.market/v2/tokens/detail/EigenLayer').json()['data']['last_price']
+    #return requests.get('https://api-v2.whales.market/v2/tokens/detail/EigenLayer').json()['data']['last_price']
+    return 0.05
 
 def get_ef_price():
     return float(requests.get('https://fapi.binance.com/fapi/v1/ticker/price?symbol=ETHFIUSDT').json()['price'])
@@ -563,10 +565,11 @@ your EL points {int(el):,}
 your EF points {int(ef):,}
 global EL points {int(global_el):,}
 global EF points {int(global_ef):,}
-EL point price {el_price:.3f}
-EF token price {ef_price:.3f}
-your EL airdrop {el * el_price:.3f}
-your EF airdrop {ef / global_ef * ef_airdrop * ef_price:.3f}
+EL point price ${el_price:.3f}
+EF token price ${ef_price:.3f}
+your EL airdrop ${el * el_price:.3f}
+your EF airdrop ${ef / global_ef * ef_airdrop * ef_price:.3f}
+your EF airdrop {ef / global_ef * ef_airdrop:.3f}
 """.strip())
 
 
