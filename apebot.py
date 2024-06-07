@@ -38,9 +38,9 @@ def ad(obj={}, **kw):
     else:
         return obj
 
-def req(url, **kw):
-    time.sleep(0.1)
-    r = requests.get(url, **kw)
+def req(url, method='get', sleep=0.1, **kw):
+    time.sleep(sleep)
+    r = requests.request(method, url, **kw)
     logger.info(f"GET {url} {r.status_code}")
     return ad(r.json())
 
@@ -396,12 +396,23 @@ def get_dydxv4_funding(start=None, end=None):
             apr = float(data.rate) * 24 * 365
             yield (symbol, timestamp, apr)
 
+def get_hyperliquid_funding(start=None, end=None):
+    url = 'https://api.hyperliquid.xyz/info'
+    start_time = int((datetime.datetime.now() - datetime.timedelta(days=20)).timestamp() * 1000)
+    for coin in req(url, method='post', json={'type': 'meta'}).universe:
+        symbol = coin.name
+        for data in req(url, method='post', sleep=1, json={'type': 'fundingHistory', 'coin': symbol, 'startTime': start_time}):
+            timestamp = normtz(datetime.datetime.utcfromtimestamp(data.time / 1000))
+            apr = float(data.fundingRate) * 24 * 365
+            yield (symbol, timestamp, apr)
+
 FUNDING_EXCHANGES = {
     'binanceu': get_binanceu_funding,
     'binancec': get_binancec_funding,
     #'ftx': get_ftx_funding,
     'dydx': get_dydx_funding,
     'dydxv4': get_dydxv4_funding,
+    'hyperliquid': get_hyperliquid_funding,
 }
 
 def normtz(dt):
@@ -523,6 +534,11 @@ def funding_command2(update: Update, ctx: CallbackContext) -> None:
     message = f'{days[0]} funding rates: \(APR\)\n'
     message += '\n'.join(f'`{r[0]:{w[0]}} {r[1]:{w[1]}} {r[2]:>{w[2]}}`' for r in rows)
     update.message.reply_text(message, parse_mode=telegram.ParseMode.MARKDOWN_V2)
+
+
+def farb_command(update: Update, ctx: CallbackContext) -> None:
+    # TODO return top 10 max(abs(funding diff by exchange)) group by symbol
+    logger.info(update.message.text)
 
 
 def get_el():
@@ -689,6 +705,7 @@ def main() -> None:
     dispatcher.add_handler(CommandHandler("greed", greed_command))
     dispatcher.add_handler(CommandHandler("update_funding", update_funding_command))
     dispatcher.add_handler(CommandHandler("f", funding_command2))
+    dispatcher.add_handler(CommandHandler("farb", farb_command))
     dispatcher.add_handler(CommandHandler("price_alert", price_alert_command))
     dispatcher.add_handler(CommandHandler("p", get_price_command))
     dispatcher.add_handler(CommandHandler("float", float_command))
