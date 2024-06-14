@@ -686,6 +686,32 @@ def launchpool_alert(ctx: CallbackContext):
         con.commit()
 
 
+from web3 import Web3
+def update_lp(ctx):
+    con = sqlite3.connect('lp.sqlite3')
+    cur = con.cursor()
+    try:
+        cur.execute('create table if not exists lp(timestamp datetime default current_timestamp, contract string, address, string, total_lp real, my_lp real, token0 real, token1 real)')
+        con.commit()
+    except:
+        pass
+    address = config.wallet[config.telegram.chat_id]
+    for lp in config.lp:
+        contract = lp.contract
+        w = Web3(Web3.HTTPProvider(lp.rpc))
+        c = w.eth.contract(address=contract, abi=lp.abi)
+        my_lp = c.functions.balanceOf(address).call() * 10**-lp.decimals
+        total_lp = c.functions.totalSupply().call() * 10**-lp.decimals
+        reserves = c.functions.getReserves().call()
+        tokens = [reserves[i] * 10**-lp.tokens[i].decimals for i in [0, 1]]
+        my_tokens = [tokens[i] * my_lp / total_lp for i in [0, 1]]
+        logger.info(f"contract {contract} address {address} total_lp {total_lp} my_lp {my_lp} token0 {tokens[0]} token1 {tokens[1]} my {lp.tokens[0].token} {my_tokens[0]} my {lp.tokens[1].token} {my_tokens[1]} k {my_tokens[0] * my_tokens[1]}")
+        #ctx.bot.send_message(config.telegram.chat_id, text)
+        args = [contract, address, total_lp, my_lp, tokens[0], tokens[1]]
+        cur.execute('insert into lp (contract, address, total_lp, my_lp, token0, token1) values (?, ?, ?, ?, ?, ?)', args)
+        con.commit()
+
+
 
 def get_persistence(path):
     try:
@@ -718,6 +744,7 @@ def main() -> None:
     updater.job_queue.run_repeating(update_funding, interval=300, first=1) # 5m
     updater.job_queue.run_repeating(price_alert, interval=60, first=1) # 1m
     updater.job_queue.run_repeating(launchpool_alert, interval=3600, first=1) # 1h
+    updater.job_queue.run_repeating(update_lp, interval=3600, first=1) # 1h
     #disabled
     #updater.job_queue.run_repeating(order_alert, interval=60, first=1) # 1m
     #updater.job_queue.run_repeating(ftt_alert, interval=31, first=1) # 1m

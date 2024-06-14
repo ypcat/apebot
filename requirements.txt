@@ -5,3 +5,4 @@ ccxt
 iso8601
 python-telegram-bot
 requests
+web3
