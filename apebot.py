@@ -546,7 +546,8 @@ def get_el():
 
 def get_ef():
     #return requests.get('https://www.etherfi.bid/api/etherfi/points').json()['loyaltyPoints'] * 10 - 9 * 37100695710
-    return requests.get('https://www.ether.fi/api/points').json()['loyaltyPoints']
+    #return requests.get('https://www.ether.fi/api/points').json()['loyaltyPoints']
+    return requests.get('https://app.ether.fi/api/points').json()['loyaltyPoints']
 
 def get_el_price():
     #return requests.get('https://api-v2.whales.market/v2/tokens/detail/EigenLayer').json()['data']['last_price']
@@ -587,6 +588,50 @@ your EL airdrop ${el * el_price:.3f}
 your EF airdrop ${ef / global_ef * ef_airdrop * ef_price:.3f}
 your EF airdrop {ef / global_ef * ef_airdrop:.3f}
 """.strip())
+
+
+def get_lp_tokens_history(contract, address):
+    con = sqlite3.connect('lp.sqlite3')
+    return con.execute('select token0 * my_lp / total_lp, token1 * my_lp / total_lp from lp where contract = ? and address = ? order by timestamp desc limit 25', [contract, address]).fetchall()
+
+def get_aave_debt(chain, token, address):
+    chain = ad(config.aave[chain])
+    token = ad(chain[token])
+    w = Web3(Web3.HTTPProvider(chain.rpc))
+    c = w.eth.contract(address=token.contract, abi=chain.abi)
+    return c.functions.balanceOf(address).call() * 10**-token.decimals
+
+def get_pnl(tokens, debts):
+    bal = [t - d for t, d in zip(tokens, debts)]
+    return (bal[1]/tokens[1]*tokens[0]+bal[0], bal[0]/tokens[0]*tokens[1]+bal[1])
+
+def get_lp_output(lp, address):
+    hist = get_lp_tokens_history(lp.contract, address)
+    debts = [get_aave_debt(lp.aave, t.token, address) for t in lp.tokens]
+    d0, d1 = debts
+    t0, t1 = hist[0][0], hist[0][1]
+    dt0 = d1/t1*t0+d0
+    dt1 = d0/t0*t1+d1
+    s0 = lp.tokens[0]["token"]
+    s1 = lp.tokens[1]["token"]
+    pnl_t = get_pnl(hist[0], debts)
+    pnl_0 = get_pnl(hist[-1], debts)
+    pnl_1d = [pnl_t[0]-pnl_0[0], pnl_t[1] - pnl_0[1]]
+    apy_1d = pnl_1d[0] / dt0 * 365
+    return f"""
+lp {t0:.3f} {s0} + {t1:.3f} {s1} = {t0*2:.3f} {s0} or {t1*2:.3f} {s1}
+debts {d0:.3f} {s0} + {d1:.3f} {s0} = {dt1:.3f} {s0} or {dt1:.3f} {s1}
+pnl 24h {pnl_1d[0]:.3f} {s0} or {pnl_1d[1]:.3f} {s1}
+pnl all {pnl_t[0]:.3f} {s0} or {pnl_t[1]:.3f} {s1}
+apy 24h {apy_1d*100:.3f}%
+""".strip()
+
+def lp_command(update: Update, ctx: CallbackContext) -> None:
+    chat_id = update.message.chat_id
+    address = config.wallet[str(chat_id)]
+    for lp in config.lp:
+        text = get_lp_output(lp, address)
+        update.message.reply_text(text)
 
 
 BINANCE_ORDERS_CONFIG = [
@@ -740,6 +785,7 @@ def main() -> None:
     dispatcher.add_handler(CommandHandler("delete_price_alert", delete_price_alert_command))
     dispatcher.add_handler(CommandHandler(["point", "points"], points_command))
     dispatcher.add_handler(CommandHandler(["etherfi", "ethfi"], etherfi_command))
+    dispatcher.add_handler(CommandHandler("lp", lp_command))
     updater.job_queue.run_repeating(update_markets, interval=3600, first=1) # 1h
     updater.job_queue.run_repeating(update_funding, interval=300, first=1) # 5m
     updater.job_queue.run_repeating(price_alert, interval=60, first=1) # 1m
