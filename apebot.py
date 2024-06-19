@@ -620,11 +620,15 @@ def get_lp_output(lp, address):
     apy_1d = pnl_1d[0] / dt0 * 365
     days = (datetime.datetime.now(datetime.timezone.utc) - datetime.datetime.fromisoformat(lp.start)).total_seconds() / 86400
     apy_all = pnl_t[0] / dt0 / days * 365
+    k0 = hist[-1][0]*hist[-1][1]
+    kt = t0*t1
+    kapy_1d = ((kt/k0)**0.5-1)*365
     return f"""
 lp {t0:.3f} {s0} + {t1:.3f} {s1} = {t0*2:.3f} {s0} ({t1*2:.3f} {s1})
 debt {d0:.3f} {s0} + {d1:.3f} {s0} = {dt0:.3f} {s0} ({dt1:.3f} {s1})
 24h pnl {pnl_1d[0]:.3f} {s0} ({pnl_1d[1]:.3f} {s1}) apy {apy_1d*100:.3f}%
 all pnl {pnl_t[0]:.3f} {s0} ({pnl_t[1]:.3f} {s1}) apy {apy_all*100:.3f}%
+k apy 24h {kapy_1d*100:.3f}%
 """.strip()
 
 def lp_command(update: Update, ctx: CallbackContext) -> None:
