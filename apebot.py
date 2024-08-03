@@ -23,7 +23,7 @@ import traceback
 from attrdict import AttrDict
 from bscscan import BscScan
 from telegram import Update, ForceReply
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext, PicklePersistence
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext, PicklePersistence, RegexHandler
 import ccxt
 import requests
 import telegram
@@ -639,6 +639,11 @@ def lp_command(update: Update, ctx: CallbackContext) -> None:
         update.message.reply_text(text)
 
 
+def twitter_command(update: Update, _: CallbackContext) -> None:
+    text = re.sub(r'(twitter|x).com', 'twiiit.com', update.message.text)
+    update.message.reply_text(text)
+
+
 BINANCE_ORDERS_CONFIG = [
     {'market': 'spot',            'url': 'https://www.binance.com/bapi/capital/v1/private/streamer/order/get-trade-orders', 'headers': {'Referer': 'https://www.binance.com/en/my/orders/exchange/tradeorder'},               'data':{}},
     {'market': 'future usd-m',    'url': 'https://www.binance.com/bapi/futures/v1/private/future/order/order-history',      'headers': {'Referer': 'https://www.binance.com/en/my/orders/futures/orderhistory'},              'data':{}},
@@ -762,6 +767,24 @@ def update_lp(ctx):
         con.commit()
 
 
+def kelp_withdraw():
+    result = {}
+    for k, c in config.kelp_withdraw.items():
+        r = req(c['url'], method='post', json=c['json'], headers={'origin':c['origin']})
+        s = r.result[c['result_range'][0]:c['result_range'][1]]
+        result[k] = int(s, 16)*10**(-c['decimals'])
+    return result
+
+def check_kelp_withdraw(ctx):
+    last = ctx.bot_data.get('kelp_withdraw_last_notified', datetime.datetime.now())
+    if (datetime.datetime.now() - last).seconds < 3600:
+        return
+    for k, n in kelp_withdraw().items():
+        if n > 0.1:
+            text = f"kelp {k} {n}"
+            ctx.bot.send_message(config.telegram.chat_id, text)
+            ctx.bot_data['kelp_withdraw_last_notified'] = datetime.datetime.now()
+
 
 def get_persistence(path):
     try:
@@ -791,11 +814,13 @@ def main() -> None:
     dispatcher.add_handler(CommandHandler(["point", "points"], points_command))
     dispatcher.add_handler(CommandHandler(["etherfi", "ethfi"], etherfi_command))
     dispatcher.add_handler(CommandHandler("lp", lp_command))
+    dispatcher.add_handler(RegexHandler(r'https://(twitter|x).com/', twitter_command))
     updater.job_queue.run_repeating(update_markets, interval=3600, first=1) # 1h
     updater.job_queue.run_repeating(update_funding, interval=300, first=1) # 5m
     updater.job_queue.run_repeating(price_alert, interval=60, first=1) # 1m
     updater.job_queue.run_repeating(launchpool_alert, interval=3600, first=1) # 1h
     updater.job_queue.run_repeating(update_lp, interval=3600, first=1) # 1h
+    updater.job_queue.run_repeating(check_kelp_withdraw, interval=300, first=1) # 5m
     #disabled
     #updater.job_queue.run_repeating(order_alert, interval=60, first=1) # 1m
     #updater.job_queue.run_repeating(ftt_alert, interval=31, first=1) # 1m
