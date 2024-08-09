@@ -640,6 +640,7 @@ def lp_command(update: Update, ctx: CallbackContext) -> None:
 
 
 def twitter_command(update: Update, _: CallbackContext) -> None:
+    logger.info(update.message.text)
     text = re.sub(r'(twitter|x).com', 'twiiit.com', update.message.text)
     update.message.reply_text(text)
 
@@ -786,6 +787,37 @@ def check_kelp_withdraw(ctx):
             ctx.bot_data['kelp_withdraw_last_notified'] = datetime.datetime.now()
 
 
+def lst_eth(names):
+    w = Web3(Web3.HTTPProvider(config.oracle.rpc))
+    result = {}
+    for name in names:
+        c = w.eth.contract(address=config.oracle[name], abi=config.oracle.abi)
+        result[name] = c.functions.latestAnswer().call() * 1e-18
+    return result
+
+def lst_sol(names):
+    url = 'https://sanctum-extra-api.ngrok.dev/v1/sol-value/current'
+    params = [('lst', name) for name in names]
+    r = requests.get(url, params=params)
+    return {k: int(v) * 1e-9 for k, v in r.json()['solValues'].items()}
+
+def lst_command(update: Update, ctx: CallbackContext) -> None:
+    logger.info(update.message.text)
+    names = re.split(r'[ /]', update.message.text[1:])[1:]
+    if 0 < len(names) < 3 and all('eth' in name for name in names):
+        exchange_rates = lst_eth(names)
+    elif 0 < len(names) < 3 and all(name == 'inf' or 'sol' in name for name in names):
+        exchange_rates = lst_sol(names)
+    else:
+        update.message.reply_text('ngmi')
+        return
+    if len(names) == 1:
+        text = f"{exchange_rates[names[0]]:.4f}"
+    else:
+        text = f"{exchange_rates[names[0]] / exchange_rates[names[1]]:.4f}"
+    update.message.reply_text(text)
+
+
 def get_persistence(path):
     try:
         assert(os.path.getsize(path) > 0)
@@ -814,7 +846,8 @@ def main() -> None:
     dispatcher.add_handler(CommandHandler(["point", "points"], points_command))
     dispatcher.add_handler(CommandHandler(["etherfi", "ethfi"], etherfi_command))
     dispatcher.add_handler(CommandHandler("lp", lp_command))
-    dispatcher.add_handler(RegexHandler(r'https://(twitter|x).com/', twitter_command))
+    dispatcher.add_handler(CommandHandler("lst", lst_command))
+    dispatcher.add_handler(RegexHandler(r'https://(twitter|x).com/.*', twitter_command))
     updater.job_queue.run_repeating(update_markets, interval=3600, first=1) # 1h
     updater.job_queue.run_repeating(update_funding, interval=300, first=1) # 5m
     updater.job_queue.run_repeating(price_alert, interval=60, first=1) # 1m
