@@ -641,8 +641,9 @@ def lp_command(update: Update, ctx: CallbackContext) -> None:
 
 def twitter_command(update: Update, _: CallbackContext) -> None:
     logger.info(update.message.text)
-    text = re.sub(r'(twitter|x).com', 'twiiit.com', update.message.text)
-    update.message.reply_text(text)
+    url = "http://192.168.0.119:8000/get_tweet?url=" + update.message.text
+    r = requests.get(url)
+    update.message.reply_photo(r.content)
 
 
 BINANCE_ORDERS_CONFIG = [
@@ -818,6 +819,30 @@ def lst_command(update: Update, ctx: CallbackContext) -> None:
     update.message.reply_text(text)
 
 
+def quote_cowswap(name, amount=1):
+    payload = dict(config.cowswap[name], sellAmountBeforeFee=str(int(amount * 1e18)))
+    r = requests.post('https://api.cow.fi/mainnet/api/v1/quote', json=payload)
+    return int(r.json()['quote']['buyAmount']) * 1e-18
+
+def peg_command(update: Update, ctx: CallbackContext) -> None:
+    logger.info(update.message.text)
+    try:
+        names = update.message.text.split()[1:] or config.cowswap.keys()
+        for name in names:
+            rate = lst_eth([name])[name]
+            quote = {i: quote_cowswap(name, i) for i in [1, 10, 32]}
+            text = f"""`{name}`
+`exchange rate: {rate:>6.4f}`
+`quote:`
+`{quote[1]:>6.4f} {quote[10]:>6.3f} {quote[32]:6.3f}`
+`receive:`
+`{quote[1] * rate:>6.4f} {quote[10] * rate:>6.3f} {quote[32] * rate:6.3f}`"""
+            update.message.reply_text(text, parse_mode=telegram.ParseMode.MARKDOWN_V2)
+    except:
+        traceback.print_exc()
+        update.message.reply_text('ngmi')
+
+
 def get_persistence(path):
     try:
         assert(os.path.getsize(path) > 0)
@@ -847,6 +872,7 @@ def main() -> None:
     dispatcher.add_handler(CommandHandler(["etherfi", "ethfi"], etherfi_command))
     dispatcher.add_handler(CommandHandler("lp", lp_command))
     dispatcher.add_handler(CommandHandler("lst", lst_command))
+    dispatcher.add_handler(CommandHandler("peg", peg_command))
     dispatcher.add_handler(RegexHandler(r'https://(twitter|x).com/.*', twitter_command))
     updater.job_queue.run_repeating(update_markets, interval=3600, first=1) # 1h
     updater.job_queue.run_repeating(update_funding, interval=300, first=1) # 5m
