@@ -843,6 +843,17 @@ def peg_command(update: Update, ctx: CallbackContext) -> None:
         update.message.reply_text('ngmi')
 
 
+def gas_command(update: Update, ctx: CallbackContext) -> None:
+    try:
+        params = {'module': 'gastracker', 'action': 'gasoracle', 'apikey': config.etherscan.token}
+        r = requests.get('https://api.etherscan.io/api', params=params).json()['result']
+        text = ' '.join(f"{float(r[k]):.3f}" for k in ['SafeGasPrice', 'ProposeGasPrice', 'FastGasPrice'])
+        update.message.reply_text(text)
+    except:
+        traceback.print_exc()
+        update.message.reply_text('ngmi')
+
+
 def get_persistence(path):
     try:
         assert(os.path.getsize(path) > 0)
@@ -873,6 +884,7 @@ def main() -> None:
     dispatcher.add_handler(CommandHandler("lp", lp_command))
     dispatcher.add_handler(CommandHandler("lst", lst_command))
     dispatcher.add_handler(CommandHandler("peg", peg_command))
+    dispatcher.add_handler(CommandHandler("gas", gas_command))
     dispatcher.add_handler(RegexHandler(r'https://(twitter|x).com/.*', twitter_command))
     updater.job_queue.run_repeating(update_markets, interval=3600, first=1) # 1h
     updater.job_queue.run_repeating(update_funding, interval=300, first=1) # 5m
