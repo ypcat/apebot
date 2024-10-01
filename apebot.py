@@ -406,6 +406,20 @@ def get_hyperliquid_funding(start=None, end=None):
             apr = float(data.fundingRate) * 24 * 365
             yield (symbol, timestamp, apr)
 
+def get_aevo_funding(start=None, end=None):
+    # XXX not support start/end time
+    get = lambda api, **args: req('https://api.aevo.xyz/' + api, sleep=0.5, method='get', params=args)
+    for i in get('markets', instrument_type='PERPETUAL'):
+        r = get('funding-history', instrument_name=i.instrument_name, limit=50)
+        if 'funding_history' not in r:
+            logger.error(f"{i.instrument_name} {r}")
+            continue
+        for s, t, f, p in r.funding_history:
+            symbol = s.replace('-PERP', '')
+            timestamp = normtz(datetime.datetime.utcfromtimestamp(int(t) / 1000000000))
+            apr = float(f) * 24 * 365
+            yield (symbol, timestamp, apr)
+
 FUNDING_EXCHANGES = {
     'binanceu': get_binanceu_funding,
     'binancec': get_binancec_funding,
@@ -413,6 +427,7 @@ FUNDING_EXCHANGES = {
     'dydx': get_dydx_funding,
     'dydxv4': get_dydxv4_funding,
     'hyperliquid': get_hyperliquid_funding,
+    'aevo': get_aevo_funding,
 }
 
 def normtz(dt):
@@ -789,9 +804,12 @@ def check_kelp_withdraw(ctx):
 
 
 def lst_eth(names):
-    w = Web3(Web3.HTTPProvider(config.oracle.rpc))
     result = {}
     for name in names:
+        if name in config.oracle.base:
+            w = Web3(Web3.HTTPProvider(config.oracle.rpc.base))
+        else:
+            w = Web3(Web3.HTTPProvider(config.oracle.rpc.arbitrum))
         c = w.eth.contract(address=config.oracle[name], abi=config.oracle.abi)
         result[name] = c.functions.latestAnswer().call() * 1e-18
     return result
@@ -843,6 +861,10 @@ def peg_command(update: Update, ctx: CallbackContext) -> None:
         update.message.reply_text('ngmi')
 
 
+def get_gas():
+    params = {'module': 'gastracker', 'action': 'gasoracle', 'apikey': config.etherscan.token}
+    return requests.get('https://api.etherscan.io/api', params=params).json()['result']
+
 def gas_command(update: Update, ctx: CallbackContext) -> None:
     try:
         params = {'module': 'gastracker', 'action': 'gasoracle', 'apikey': config.etherscan.token}
@@ -892,6 +914,7 @@ def main() -> None:
     updater.job_queue.run_repeating(launchpool_alert, interval=3600, first=1) # 1h
     updater.job_queue.run_repeating(update_lp, interval=3600, first=1) # 1h
     updater.job_queue.run_repeating(check_kelp_withdraw, interval=300, first=1) # 5m
+    updater.job_queue.run_repeating(update_funding, interval=300, first=1) # 5m
     #disabled
     #updater.job_queue.run_repeating(order_alert, interval=60, first=1) # 1m
     #updater.job_queue.run_repeating(ftt_alert, interval=31, first=1) # 1m
