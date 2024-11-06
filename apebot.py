@@ -440,7 +440,7 @@ def update_exchange_funding(exchange, start=None, end=None):
     ts_max = None
     count = 0
     total = 0
-    con = sqlite3.connect('apebot.sqlite3')
+    con = sqlite3.connect('apebot.sqlite3', timeout=60)
     cur = con.cursor()
     try:
         cur.execute('create table if not exists funding (exchange text, symbol text, time timestamp, apr real, unique(exchange, symbol, time))')
@@ -876,6 +876,16 @@ def gas_command(update: Update, ctx: CallbackContext) -> None:
         update.message.reply_text('ngmi')
 
 
+def get_btcd():
+    url = 'https://pro-api.coingecko.com/api/v3/global'
+    headers = {'x-cg-pro-api-key': config.coingecko.apiKey}
+    return ad(requests.get(url, headers=headers).json()).data.market_cap_percentage.btc
+
+
+def btcd_command(update: Update, ctx: CallbackContext) -> None:
+    update.message.reply_text(f"BTC dominance {get_btcd():.2f}%")
+
+
 def get_persistence(path):
     try:
         assert(os.path.getsize(path) > 0)
@@ -908,6 +918,7 @@ def main() -> None:
     dispatcher.add_handler(CommandHandler("peg", peg_command))
     dispatcher.add_handler(CommandHandler("gas", gas_command))
     dispatcher.add_handler(RegexHandler(r'https://(twitter|x).com/.*', twitter_command))
+    dispatcher.add_handler(CommandHandler("btcd", btcd_command))
     updater.job_queue.run_repeating(update_markets, interval=3600, first=1) # 1h
     updater.job_queue.run_repeating(update_funding, interval=300, first=1) # 5m
     updater.job_queue.run_repeating(price_alert, interval=60, first=1) # 1m
