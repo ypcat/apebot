@@ -420,6 +420,18 @@ def get_aevo_funding(start=None, end=None):
             apr = float(f) * 24 * 365
             yield (symbol, timestamp, apr)
 
+def get_bybit_funding(start=None, end=None):
+    # XXX not support start/end time
+    get = lambda api, **args: req('https://api.bybit.com/v5/' + api, sleep=0.1, method='get', params=args)
+    for i in get('market/tickers', category='linear').result.list:
+        if not i.symbol.endswith('USDT'):
+            continue
+        for j in get('market/funding/history', category='linear', symbol=i.symbol).result.list:
+            symbol = re.sub(r'USDT', '', j.symbol)
+            timestamp = normtz(datetime.datetime.utcfromtimestamp(int(j.fundingRateTimestamp) / 1000))
+            apr = float(j.fundingRate) * 3 * 365
+            yield (symbol, timestamp, apr)
+
 FUNDING_EXCHANGES = {
     'binanceu': get_binanceu_funding,
     'binancec': get_binancec_funding,
@@ -428,6 +440,7 @@ FUNDING_EXCHANGES = {
     'dydxv4': get_dydxv4_funding,
     'hyperliquid': get_hyperliquid_funding,
     'aevo': get_aevo_funding,
+    'bybit': get_bybit_funding,
 }
 
 def normtz(dt):
@@ -452,17 +465,21 @@ def update_exchange_funding(exchange, start=None, end=None):
         ts_min0 = ts_min
         ts_max0 = ts_max
         count = 0
+        rows = []
         for symbol, timestamp, apr in FUNDING_EXCHANGES[exchange](start, end):
             ts_min = min(ts_min, timestamp) if ts_min else timestamp
             ts_max = max(ts_max, timestamp) if ts_max else timestamp
             try:
                 values = (exchange, symbol, timestamp.isoformat(), apr)
-                cur.execute('insert into funding values (?, ?, ?, ?)', values)
+                rows.append(values)
+                #cur.execute('insert into funding values (?, ?, ?, ?)', values)
                 count += 1
             except sqlite3.IntegrityError:
                 pass
             except:
                 traceback.print_exc()
+        for values in rows:
+            cur.execute('insert into funding values (?, ?, ?, ?)', values)
         con.commit()
         logger.info(f"updated funding {exchange} {count} entries min timestamp {ts_min} max timestamp {ts_max}")
         total += count
