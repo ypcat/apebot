@@ -198,6 +198,8 @@ def update_markets(ctx: CallbackContext):
 
 
 def get_coin_id(symbol, ctx):
+    if symbol in config.coingecko.coin_id:
+        return config.coingecko.coin_id[symbol]
     coins = [c for c in ctx.bot_data['coins'] if c['symbol'] == symbol]
     if len(coins) > 1:
         raise ValueError(f"more than 1 coin with symbol {symbol} {coins}")
@@ -479,7 +481,7 @@ def update_exchange_funding(exchange, start=None, end=None):
             except:
                 traceback.print_exc()
         for values in rows:
-            cur.execute('insert into funding values (?, ?, ?, ?)', values)
+            cur.execute('insert or ignore into funding values (?, ?, ?, ?)', values)
         con.commit()
         logger.info(f"updated funding {exchange} {count} entries min timestamp {ts_min} max timestamp {ts_max}")
         total += count
@@ -657,7 +659,7 @@ def get_lp_output(lp, address):
     kapy_1d = ((kt/k0)**0.5-1)*365
     return f"""
 lp {t0:.3f} {s0} + {t1:.3f} {s1} = {t0*2:.3f} {s0} ({t1*2:.3f} {s1})
-debt {d0:.3f} {s0} + {d1:.3f} {s0} = {dt0:.3f} {s0} ({dt1:.3f} {s1})
+debt {d0:.3f} {s0} + {d1:.3f} {s1} = {dt0:.3f} {s0} ({dt1:.3f} {s1})
 24h pnl {pnl_1d[0]:.3f} {s0} ({pnl_1d[1]:.3f} {s1}) apy {apy_1d*100:.3f}%
 all pnl {pnl_t[0]:.3f} {s0} ({pnl_t[1]:.3f} {s1}) apy {apy_all*100:.3f}%
 k apy 24h {kapy_1d*100:.3f}%
@@ -878,19 +880,37 @@ def peg_command(update: Update, ctx: CallbackContext) -> None:
         update.message.reply_text('ngmi')
 
 
+# {'LastBlock': '21192339', 'SafeGasPrice': '13.677901861', 'ProposeGasPrice': '13.776901861',
+#  'FastGasPrice': '15.042998634', 'suggestBaseFee': '13.676901861',
+#  'gasUsedRatio': '0.4042529,0.570727333333333,0.487542066666667,0.4838282,0.483062233333333'}
 def get_gas():
     params = {'module': 'gastracker', 'action': 'gasoracle', 'apikey': config.etherscan.token}
     return requests.get('https://api.etherscan.io/api', params=params).json()['result']
 
 def gas_command(update: Update, ctx: CallbackContext) -> None:
     try:
-        params = {'module': 'gastracker', 'action': 'gasoracle', 'apikey': config.etherscan.token}
-        r = requests.get('https://api.etherscan.io/api', params=params).json()['result']
-        text = ' '.join(f"{float(r[k]):.3f}" for k in ['SafeGasPrice', 'ProposeGasPrice', 'FastGasPrice'])
-        update.message.reply_text(text)
+        if len(ctx.args) == 0:
+            r = get_gas()
+            text = ' '.join(f"{float(r[k]):.3f}" for k in ['SafeGasPrice', 'ProposeGasPrice', 'FastGasPrice'])
+            update.message.reply_text(text)
+        else:
+            value = float(ctx.args[0])
+            ctx.bot_data['gas_alert'] = {'chat_id': update.message.chat.id, 'value': value}
+            text = f"set gas alert to {value:.2f}"
+            update.message.reply_text(text)
     except:
         traceback.print_exc()
         update.message.reply_text('ngmi')
+
+def gas_alert(ctx: CallbackContext):
+    data = ctx.bot_data.get('gas_alert')
+    if data:
+        actual = float(get_gas()['SafeGasPrice'])
+        logger.info(f"gas alert value {data['value']} actual {actual}")
+        if actual < data['value']:
+            text = f"gas < {data['value']:.2f} currently {actual:.2f}"
+            ctx.bot.send_message(data['chat_id'], text)
+            ctx.bot_data['gas_alert'] = None
 
 
 def get_btcd():
@@ -939,6 +959,7 @@ def main() -> None:
     updater.job_queue.run_repeating(update_markets, interval=3600, first=1) # 1h
     updater.job_queue.run_repeating(update_funding, interval=300, first=1) # 5m
     updater.job_queue.run_repeating(price_alert, interval=60, first=1) # 1m
+    updater.job_queue.run_repeating(gas_alert, interval=60, first=1) # 1m
     updater.job_queue.run_repeating(launchpool_alert, interval=3600, first=1) # 1h
     updater.job_queue.run_repeating(update_lp, interval=3600, first=1) # 1h
     updater.job_queue.run_repeating(check_kelp_withdraw, interval=300, first=1) # 5m
