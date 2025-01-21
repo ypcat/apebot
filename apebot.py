@@ -41,7 +41,9 @@ def ad(obj={}, **kw):
 def req(url, method='get', sleep=0.1, **kw):
     time.sleep(sleep)
     r = requests.request(method, url, **kw)
-    logger.info(f"GET {url} {r.status_code}")
+    #logger.info(f"GET {url} {r.status_code}")
+    if r.status_code != 200:
+        logger.error(f"GET {url} {r.status_code}")
     return ad(r.json())
 
 def yesterday():
@@ -207,68 +209,64 @@ def get_coin_id(symbol, ctx):
         raise ValueError(f"coin not found with symbol {symbol}")
     return coins[0]['id']
 
-def get_token_address(symbol, ctx):
-    # XXX fixed protocol
-    if (symbol in ctx.bot_data.setdefault('token_address', {}) and
-        symbol in ctx.bot_data.setdefault('token_decimals', {})):
-        return ctx.bot_data['token_address'][symbol]
+def get_coin_by_symbol(symbol, ctx):
     coin_id = get_coin_id(symbol, ctx)
-    address = req(f'https://api.coingecko.com/api/v3/coins/{coin_id}')['platforms']['ethereum']
-    ctx.bot_data['token_address'][symbol] = address
-    decimals = req(f"https://api.ethplorer.io/getTokenInfo/{address}?apiKey=freekey")['decimals']
-    ctx.bot_data['token_decimals'][symbol] = int(decimals)
-    return address
+    headers = {'x-cg-pro-api-key': config.coingecko.apiKey}
+    return req(f'https://pro-api.coingecko.com/api/v3/coins/{coin_id}', headers=headers)
 
-@functools.lru_cache()
-def get_1inch_price(from_address, to_address, from_amount, ttl=None):
-    #usdc_address = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48'
-    r = req(f"https://api.1inch.exchange/v3.0/1/quote?fromTokenAddress={from_address}&toTokenAddress={to_address}&amount={from_amount}")
-    fromAmount = float(r.fromTokenAmount)*10**-r.fromToken.decimals
-    toAmount = float(r.toTokenAmount)*10**-r.toToken.decimals
-    return fromAmount / toAmount
-
-def get_price(exchange, to_symbol, ctx, from_symbol='usdc', from_amount=10000):
-    if exchange == '1inch':
-        to_address = get_token_address(to_symbol, ctx)
-        from_address = get_token_address(from_symbol, ctx)
-        from_amount *= 10**ctx.bot_data['token_decimals'][from_symbol]
-        ttl = int(time.time() / 60)
-        return get_1inch_price(from_address, to_address, from_amount, ttl)
-    else:
-        raise ValueError(f"unsupported exchange {exchange}")
+def get_price(symbol, ctx):
+    symbol, unit = parse_symbol_unit(symbol)
+    coin = get_coin_by_symbol(symbol, ctx)
+    logger.info(coin)
+    return coin.market_data.current_price[unit]
 
 def price_alert(ctx: CallbackContext):
     for k, v in ctx.bot_data.get('price_alert', {}).items():
         logger.info(f"{k} {v}")
         try:
-            exchange, symbol, direction0, trigger_price, chat_id = k
+            symbol, direction0, trigger_price, chat_id = k
         except:
             continue
         now = normtz(datetime.datetime.utcnow())
         intv = datetime.timedelta(seconds=3600)
-        price = get_price(exchange, symbol, ctx)
+        price = get_price(symbol, ctx)
         direction = -1 if direction0 == '<' else 1
         trigger_price = float(trigger_price)
         last_notified = normtz(datetime.datetime.fromisoformat(v.setdefault('last_notified', (now-intv*2).isoformat())))
         last_price = v.setdefault('last_price', price)
         ctx.bot_data['price_alert'][k]['last_price'] = price
-        logger.info(f"{exchange} {symbol} {direction} {trigger_price} {chat_id} {price} {last_notified} {last_price}")
+        logger.info(f"{symbol} {direction} {trigger_price} {chat_id} {price} {last_notified} {last_price}")
         if now < last_notified + intv:
             logger.info(f"skip last notified too close")
             continue
-        if (price - trigger_price) * direction > 0:
-            msg = f'{symbol} on {exchange} price {price:.4f} {direction0} {trigger_price}'
+        if (price - trigger_price) * direction >= 0:
+            msg = f'{symbol} price {price:.6f} {direction0} {trigger_price:.6f}'
             logger.info(msg)
             ctx.bot.send_message(chat_id, msg)
-            ctx.bot_data['price_alert'][k]['last_notified'] = now.isoformat()
+            #ctx.bot_data['price_alert'][k]['last_notified'] = now.isoformat()
+            del ctx.bot_data['price_alert'][k]
 
 def price_alert_command(update: Update, ctx: CallbackContext) -> None:
     logger.info(f"{update.message.chat.id} {update.message.chat.username} {update.message.text}")
     try:
-        exchange, symbol, direction, trigger_price = update.message.text.split()[1:]
+        args = update.message.text.split()[1:]
+        symbol = args[0]
+        if len(args) == 2:
+            if args[1].endswith('%'):
+                percentage = float(args[1].rstrip('%'))
+                cur_price = get_price(symbol, ctx)
+                trigger_price = cur_price * (1 + percentage / 100)
+                direction = '>' if percentage > 0 else '<'
+            else:
+                trigger_price = float(args[1])
+                cur_price = get_price(symbol, ctx)
+                direction = '>' if trigger_price > cur_price else '<'
+        else:
+            direction = args[1]
+            trigger_price = float(args[2])
         chat_id = update.message.chat_id
-        ctx.bot_data['price_alert'][(exchange, symbol, direction, trigger_price, chat_id)] = {}
-        update.message.reply_text('ok')
+        ctx.bot_data.setdefault('price_alert', {})[(symbol, direction, trigger_price, chat_id)] = {}
+        update.message.reply_text(f"set price alert {symbol} {direction} ${trigger_price:.6f}")
     except:
         update.message.reply_text('error')
         traceback.print_exc()
@@ -291,6 +289,7 @@ def clear_price_alert_command(update: Update, ctx: CallbackContext) -> None:
         traceback.print_exc()
 
 def delete_price_alert_command(update: Update, ctx: CallbackContext) -> None:
+    #FIXME key spec changed
     logger.info(f"{update.message.chat.id} {update.message.chat.username} {update.message.text}")
     try:
         exchange, symbol, direction, trigger_price = update.message.text.split()[1:]
@@ -302,28 +301,22 @@ def delete_price_alert_command(update: Update, ctx: CallbackContext) -> None:
         traceback.print_exc()
 
 
+def parse_symbol_unit(symbol):
+    if '/' in symbol:
+        return symbol.split('/')
+    return symbol, 'usd'
+
 def get_price_command(update: Update, ctx: CallbackContext) -> None:
     logger.info(f"{update.message.chat.id} {update.message.chat.username} {update.message.text}")
+    args = update.message.text.split()
+    if len(args) == 1:
+        return list_price_alert_command(update, ctx)
+    if len(args) > 2:
+        return price_alert_command(update, ctx)
     try:
-        symbol = update.message.text.split()[1]
-        exchange = '1inch' # XXX
-        price = get_price(exchange, symbol, ctx)
-        update.message.reply_text(f'price {exchange} {symbol} {price:.4f}')
-    except:
-        update.message.reply_text('error')
-        logger.error(traceback.format_exc())
-
-
-def float_command(update: Update, ctx: CallbackContext) -> None:
-    logger.info(f"{update.message.chat.id} {update.message.chat.username} {update.message.text}")
-    try:
-        exchange = '1inch' # XXX
-        symbol = 'float'
-        buy_price = get_price(exchange, symbol, ctx, 'usdc', 10000)
-        sell_price = 1 / get_price(exchange, 'usdc', ctx, symbol, 6666)
-        msg = '\n'.join([f'buy price {exchange} {symbol} {buy_price:.4f}',
-                         f'sell price {exchange} {symbol} {sell_price:.4f}'])
-        update.message.reply_text(msg)
+        symbol = args[1]
+        price = get_price(symbol, ctx)
+        update.message.reply_text(f'price {symbol} = ${price:.6f}'.rstrip('.0'))
     except:
         update.message.reply_text('error')
         logger.error(traceback.format_exc())
@@ -944,7 +937,6 @@ def main() -> None:
     dispatcher.add_handler(CommandHandler("farb", farb_command))
     dispatcher.add_handler(CommandHandler("price_alert", price_alert_command))
     dispatcher.add_handler(CommandHandler("p", get_price_command))
-    dispatcher.add_handler(CommandHandler("float", float_command))
     dispatcher.add_handler(CommandHandler("list_price_alert", list_price_alert_command))
     dispatcher.add_handler(CommandHandler("clear_price_alert", clear_price_alert_command))
     dispatcher.add_handler(CommandHandler("delete_price_alert", delete_price_alert_command))
