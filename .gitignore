@@ -138,4 +138,4 @@ config.json
 prices.sqlite3
 cache.sqlite3
 lp.sqlite3
-
+coins.json

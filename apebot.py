@@ -274,7 +274,9 @@ def price_alert_command(update: Update, ctx: CallbackContext) -> None:
 def list_price_alert_command(update: Update, ctx: CallbackContext) -> None:
     logger.info(f"{update.message.chat.id} {update.message.chat.username} {update.message.text}")
     try:
-        update.message.reply_text(pprint.pformat(ctx.bot_data['price_alert'], width=40))
+        #update.message.reply_text(pprint.pformat(ctx.bot_data['price_alert'], width=40))
+        text = '\n'.join(repr(k) for k in ctx.bot_data['price_alert'].keys())
+        update.message.reply_text(text)
     except:
         update.message.reply_text('error')
         traceback.print_exc()
@@ -916,6 +918,12 @@ def btcd_command(update: Update, ctx: CallbackContext) -> None:
     update.message.reply_text(f"BTC dominance {get_btcd():.2f}%")
 
 
+def reload_command(update: Update, ctx: CallbackContext) -> None:
+    global config
+    config = ad(json.load(open("config.json")))
+    update.message.reply_text('ok')
+
+
 def get_persistence(path):
     try:
         assert(os.path.getsize(path) > 0)
@@ -948,6 +956,7 @@ def main() -> None:
     dispatcher.add_handler(CommandHandler("gas", gas_command))
     dispatcher.add_handler(RegexHandler(r'https://(twitter|x).com/.*', twitter_command))
     dispatcher.add_handler(CommandHandler("btcd", btcd_command))
+    dispatcher.add_handler(CommandHandler("reload", reload_command))
     updater.job_queue.run_repeating(update_markets, interval=3600, first=1) # 1h
     updater.job_queue.run_repeating(update_funding, interval=300, first=1) # 5m
     updater.job_queue.run_repeating(price_alert, interval=60, first=1) # 1m
