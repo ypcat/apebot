@@ -217,7 +217,6 @@ def get_coin_by_symbol(symbol, ctx):
 def get_price(symbol, ctx):
     symbol, unit = parse_symbol_unit(symbol)
     coin = get_coin_by_symbol(symbol, ctx)
-    logger.info(coin)
     return coin.market_data.current_price[unit]
 
 def price_alert(ctx: CallbackContext):
@@ -670,9 +669,15 @@ def lp_command(update: Update, ctx: CallbackContext) -> None:
 
 def twitter_command(update: Update, _: CallbackContext) -> None:
     logger.info(update.message.text)
-    url = "http://192.168.0.119:8000/get_tweet?url=" + update.message.text
-    r = requests.get(url)
-    update.message.reply_photo(r.content)
+    update.message.reply_text(update.message.text.replace('x.com', 'nitter.net'))
+    #url = "http://192.168.0.119:8000/get_tweet?url=" + update.message.text
+    #r = requests.get(url)
+    #update.message.reply_photo(r.content)
+
+def stonk_command(update: Update, _: CallbackContext) -> None:
+    url = requests.get('http://192.168.0.119:8000/stonk').json()
+    logger.info(url)
+    update.message.reply_photo(url)
 
 
 BINANCE_ORDERS_CONFIG = [
@@ -957,11 +962,12 @@ def main() -> None:
     dispatcher.add_handler(RegexHandler(r'https://(twitter|x).com/.*', twitter_command))
     dispatcher.add_handler(CommandHandler("btcd", btcd_command))
     dispatcher.add_handler(CommandHandler("reload", reload_command))
+    dispatcher.add_handler(CommandHandler("stonk", stonk_command))
     updater.job_queue.run_repeating(update_markets, interval=3600, first=1) # 1h
     updater.job_queue.run_repeating(update_funding, interval=300, first=1) # 5m
     updater.job_queue.run_repeating(price_alert, interval=60, first=1) # 1m
     updater.job_queue.run_repeating(gas_alert, interval=60, first=1) # 1m
-    updater.job_queue.run_repeating(launchpool_alert, interval=3600, first=1) # 1h
+    #updater.job_queue.run_repeating(launchpool_alert, interval=3600, first=1) # 1h
     updater.job_queue.run_repeating(update_lp, interval=3600, first=1) # 1h
     updater.job_queue.run_repeating(check_kelp_withdraw, interval=300, first=1) # 5m
     updater.job_queue.run_repeating(update_funding, interval=300, first=1) # 5m
