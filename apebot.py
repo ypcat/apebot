@@ -679,6 +679,16 @@ def stonk_command(update: Update, _: CallbackContext) -> None:
     logger.info(url)
     update.message.reply_photo(url)
 
+def sbr_command(update: Update, _: CallbackContext) -> None:
+    logger.info(update.message.text)
+    r = requests.get("http://192.168.0.119:8000/sbr" )
+    update.message.reply_photo(r.content)
+
+def coin_command(update: Update, _: CallbackContext) -> None:
+    logger.info(update.message.text)
+    r = requests.get("http://192.168.0.119:8000/coin" )
+    update.message.reply_photo(r.content)
+
 
 BINANCE_ORDERS_CONFIG = [
     {'market': 'spot',            'url': 'https://www.binance.com/bapi/capital/v1/private/streamer/order/get-trade-orders', 'headers': {'Referer': 'https://www.binance.com/en/my/orders/exchange/tradeorder'},               'data':{}},
@@ -945,6 +955,7 @@ def main() -> None:
     dispatcher.add_handler(CommandHandler("f1", funding_command))
     dispatcher.add_handler(CommandHandler("apy", apy_command))
     dispatcher.add_handler(CommandHandler("greed", greed_command))
+    dispatcher.add_handler(CommandHandler("fear", greed_command))
     dispatcher.add_handler(CommandHandler("update_funding", update_funding_command))
     dispatcher.add_handler(CommandHandler("f", funding_command2))
     dispatcher.add_handler(CommandHandler("farb", farb_command))
@@ -963,6 +974,8 @@ def main() -> None:
     dispatcher.add_handler(CommandHandler("btcd", btcd_command))
     dispatcher.add_handler(CommandHandler("reload", reload_command))
     dispatcher.add_handler(CommandHandler("stonk", stonk_command))
+    dispatcher.add_handler(CommandHandler("sbr", sbr_command))
+    dispatcher.add_handler(CommandHandler("coin", coin_command))
     updater.job_queue.run_repeating(update_markets, interval=3600, first=1) # 1h
     updater.job_queue.run_repeating(update_funding, interval=300, first=1) # 5m
     updater.job_queue.run_repeating(price_alert, interval=60, first=1) # 1m
