@@ -890,23 +890,23 @@ def peg_command(update: Update, ctx: CallbackContext) -> None:
         update.message.reply_text('ngmi')
 
 
-# {'LastBlock': '21192339', 'SafeGasPrice': '13.677901861', 'ProposeGasPrice': '13.776901861',
-#  'FastGasPrice': '15.042998634', 'suggestBaseFee': '13.676901861',
-#  'gasUsedRatio': '0.4042529,0.570727333333333,0.487542066666667,0.4838282,0.483062233333333'}
-def get_gas():
-    params = {'module': 'gastracker', 'action': 'gasoracle', 'apikey': config.etherscan.token}
-    return requests.get('https://api.etherscan.io/api', params=params).json()['result']
+def get_gas(chain='eth'):
+    chain_id = {'base': 8453}.get(chain, 1)
+    r = requests.get(f"https://gas.api.infura.io/v3/{config.infura.apiKey}/networks/{chain_id}/suggestedGasFees")
+    return float(r.json()['low']['suggestedMaxFeePerGas'])
 
 def gas_command(update: Update, ctx: CallbackContext) -> None:
     try:
-        if len(ctx.args) == 0:
-            r = get_gas()
-            text = ' '.join(f"{float(r[k]):.3f}" for k in ['SafeGasPrice', 'ProposeGasPrice', 'FastGasPrice'])
+        try: value = float(ctx.args[-1])
+        except: value = 0
+        try: chain = ctx.args[0]
+        except: chain = 'eth'
+        if value:
+            ctx.bot_data['gas_alert'] = {'chat_id': update.message.chat.id, 'value': value, 'chain': chain}
+            text = f"set gas alert to {chain} {value:.3f}"
             update.message.reply_text(text)
         else:
-            value = float(ctx.args[0])
-            ctx.bot_data['gas_alert'] = {'chat_id': update.message.chat.id, 'value': value}
-            text = f"set gas alert to {value:.2f}"
+            text = f"{get_gas(chain):.3f}"
             update.message.reply_text(text)
     except:
         traceback.print_exc()
@@ -915,10 +915,10 @@ def gas_command(update: Update, ctx: CallbackContext) -> None:
 def gas_alert(ctx: CallbackContext):
     data = ctx.bot_data.get('gas_alert')
     if data:
-        actual = float(get_gas()['SafeGasPrice'])
+        actual = get_gas(data['chain'])
         logger.info(f"gas alert value {data['value']} actual {actual}")
         if actual < data['value']:
-            text = f"gas < {data['value']:.2f} currently {actual:.2f}"
+            text = f"{data['chain']} gas < {data['value']:.3f} currently {actual:.3f}"
             ctx.bot.send_message(data['chat_id'], text)
             ctx.bot_data['gas_alert'] = None
 
