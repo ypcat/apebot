@@ -317,7 +317,7 @@ def get_price_command(update: Update, ctx: CallbackContext) -> None:
     try:
         symbol = args[1]
         price = get_price(symbol, ctx)
-        update.message.reply_text(f'price {symbol} = ${price:.6f}'.rstrip('.0'))
+        update.message.reply_text(f'price {symbol} = {price:.6f}'.rstrip('.0'))
     except:
         update.message.reply_text('error')
         logger.error(traceback.format_exc())
