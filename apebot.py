@@ -239,7 +239,7 @@ def price_alert(ctx: CallbackContext):
             logger.info(f"skip last notified too close")
             continue
         if (price - trigger_price) * direction >= 0:
-            msg = f'{symbol} price {price:.6f} {direction0} {trigger_price:.6f}'
+            msg = f'{symbol} price {price:.6f} {direction0} {trigger_price:.6f}'.rstrip('0').rstrip('.')
             logger.info(msg)
             ctx.bot.send_message(chat_id, msg)
             #ctx.bot_data['price_alert'][k]['last_notified'] = now.isoformat()
@@ -265,7 +265,7 @@ def price_alert_command(update: Update, ctx: CallbackContext) -> None:
             trigger_price = float(args[2])
         chat_id = update.message.chat_id
         ctx.bot_data.setdefault('price_alert', {})[(symbol, direction, trigger_price, chat_id)] = {}
-        update.message.reply_text(f"set price alert {symbol} {direction} ${trigger_price:.6f}")
+        update.message.reply_text(f"set price alert when {symbol} {direction} ${trigger_price:.6f}".rstrip('0').rstrip('.'))
     except:
         update.message.reply_text('error')
         traceback.print_exc()
@@ -274,7 +274,8 @@ def list_price_alert_command(update: Update, ctx: CallbackContext) -> None:
     logger.info(f"{update.message.chat.id} {update.message.chat.username} {update.message.text}")
     try:
         #update.message.reply_text(pprint.pformat(ctx.bot_data['price_alert'], width=40))
-        text = '\n'.join(repr(k) for k in ctx.bot_data['price_alert'].keys())
+        text = '\n'.join(repr(k) for k in ctx.bot_data.get('price_alert', {}).keys())
+        text = text or 'no alert'
         update.message.reply_text(text)
     except:
         update.message.reply_text('error')
@@ -316,8 +317,12 @@ def get_price_command(update: Update, ctx: CallbackContext) -> None:
         return price_alert_command(update, ctx)
     try:
         symbol = args[1]
-        price = get_price(symbol, ctx)
-        update.message.reply_text(f'price {symbol} = {price:.6f}'.rstrip('.0'))
+        symbol, unit = parse_symbol_unit(symbol)
+        coin = get_coin_by_symbol(symbol, ctx)
+        price = f'{coin.market_data.current_price[unit]:.6f}'.rstrip('0').rstrip('.')
+        change24h = f'{coin.market_data.price_change_percentage_24h_in_currency[unit]:.6f}'.rstrip('0').rstrip('.')
+        sign = '+' if not change24h.startswith('-') else ''
+        update.message.reply_text(f'price {symbol}/{unit} = {price} 24h {sign}{change24h}%')
     except:
         update.message.reply_text('error')
         logger.error(traceback.format_exc())
@@ -432,7 +437,7 @@ FUNDING_EXCHANGES = {
     'binanceu': get_binanceu_funding,
     'binancec': get_binancec_funding,
     #'ftx': get_ftx_funding,
-    'dydx': get_dydx_funding,
+    #'dydx': get_dydx_funding,
     'dydxv4': get_dydxv4_funding,
     'hyperliquid': get_hyperliquid_funding,
     'aevo': get_aevo_funding,
@@ -943,7 +948,10 @@ def get_persistence(path):
     try:
         assert(os.path.getsize(path) > 0)
     except:
-        os.remove(path)
+        try:
+            os.remove(path)
+        except:
+            pass
     return PicklePersistence(path)
 
 
