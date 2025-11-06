@@ -50,9 +50,14 @@ def yesterday():
     return datetime.datetime.now() - datetime.timedelta(days=1)
 
 
+config = {}
+def load_config():
+    global config
+    config = ad(json.load(open("config.json")))
+load_config()
+
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
-config = ad(json.load(open("config.json")))
 bsc = BscScan(config.bscscan.token)
 
 
@@ -192,6 +197,7 @@ def greed_command(update: Update, _: CallbackContext) -> None:
 
 def update_markets(ctx: CallbackContext):
     markets = req('https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&per_page=100')
+    ctx.bot_data['markets'] = markets
     ctx.bot_data['whitelist'] = {i.symbol.lower() for i in markets}
     filters = {'key': 'momo-key', 'bond': 'barnbridge', 'bunny': 'pancake-bunny', 'ust': 'terrausd'}
     coins = req('https://api.coingecko.com/api/v3/coins/list')
@@ -204,7 +210,10 @@ def get_coin_id(symbol, ctx):
         return config.coingecko.coin_id[symbol]
     coins = [c for c in ctx.bot_data['coins'] if c['symbol'] == symbol]
     if len(coins) > 1:
-        raise ValueError(f"more than 1 coin with symbol {symbol} {coins}")
+        logger.warning(f"more than 1 coin with symbol {symbol} {coins}")
+        for i in ctx.bot_data['markets']:
+            if symbol == i['symbol']:
+                return i['id']
     elif len(coins) == 0:
         raise ValueError(f"coin not found with symbol {symbol}")
     return coins[0]['id']
@@ -320,7 +329,7 @@ def get_price_command(update: Update, ctx: CallbackContext) -> None:
         symbol, unit = parse_symbol_unit(symbol)
         coin = get_coin_by_symbol(symbol, ctx)
         price = f'{coin.market_data.current_price[unit]:.6f}'.rstrip('0').rstrip('.')
-        change24h = f'{coin.market_data.price_change_percentage_24h_in_currency[unit]:.6f}'.rstrip('0').rstrip('.')
+        change24h = f'{coin.market_data.price_change_percentage_24h_in_currency[unit]:.1f}'.rstrip('0').rstrip('.')
         sign = '+' if not change24h.startswith('-') else ''
         update.message.reply_text(f'price {symbol}/{unit} = {price} 24h {sign}{change24h}%')
     except:
@@ -694,6 +703,9 @@ def coin_command(update: Update, _: CallbackContext) -> None:
     r = requests.get("http://192.168.0.119:8000/coin" )
     update.message.reply_photo(r.content)
 
+def reload_command(update: Update, _: CallbackContext) -> None:
+    load_config()
+
 
 BINANCE_ORDERS_CONFIG = [
     {'market': 'spot',            'url': 'https://www.binance.com/bapi/capital/v1/private/streamer/order/get-trade-orders', 'headers': {'Referer': 'https://www.binance.com/en/my/orders/exchange/tradeorder'},               'data':{}},
@@ -984,6 +996,7 @@ def main() -> None:
     dispatcher.add_handler(CommandHandler("stonk", stonk_command))
     dispatcher.add_handler(CommandHandler("sbr", sbr_command))
     dispatcher.add_handler(CommandHandler("coin", coin_command))
+    dispatcher.add_handler(CommandHandler("reload", reload_command))
     updater.job_queue.run_repeating(update_markets, interval=3600, first=1) # 1h
     updater.job_queue.run_repeating(update_funding, interval=300, first=1) # 5m
     updater.job_queue.run_repeating(price_alert, interval=60, first=1) # 1m
